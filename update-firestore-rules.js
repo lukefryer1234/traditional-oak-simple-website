@@ -1,0 +1,106 @@
+const fs = require('fs');
+const { execSync } = require('child_process');
+
+// Updated Firestore rules with admin dashboard support
+const firestoreRules = `rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Basic user validation function
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    // Check if user is accessing their own data
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+    
+    // Check if user is an admin
+    function isAdmin() {
+      return request.auth != null && 
+        (request.auth.token.email == "luke@mcconversions.uk" || 
+         request.auth.token.role == "SUPER_ADMIN" || 
+         request.auth.token.role == "ADMIN");
+    }
+    
+    // Check if user is a manager or higher
+    function isManagerOrHigher() {
+      return request.auth != null && 
+        (isAdmin() || request.auth.token.role == "MANAGER");
+    }
+    
+    // Users collection
+    match /users/{userId} {
+      // Allow users to read and update their own profiles
+      allow read: if isSignedIn() && (isOwner(userId) || isManagerOrHigher());
+      allow update: if isSignedIn() && (isOwner(userId) || isAdmin());
+      
+      // Only allow user creation through the createUser API
+      allow create: if false;
+      allow delete: if isAdmin();
+    }
+    
+    // Products collection
+    match /products/{productId} {
+      allow read: if true;
+      allow write: if isManagerOrHigher();
+    }
+    
+    // Orders collection
+    match /orders/{orderId} {
+      // Users can read their own orders, admins can read all
+      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isManagerOrHigher());
+      
+      // Users can create orders with their own userId
+      allow create: if isSignedIn() && 
+                     (request.resource.data.userId == request.auth.uid || isManagerOrHigher());
+                     
+      // Only admins can update or delete orders
+      allow update, delete: if isManagerOrHigher();
+    }
+    
+    // Gallery collection
+    match /gallery/{itemId} {
+      allow read: if true;
+      allow write: if isManagerOrHigher();
+    }
+    
+    // Settings collection
+    match /settings/{settingId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    
+    // Notifications collection
+    match /notifications/{notificationId} {
+      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow write: if isManagerOrHigher();
+    }
+    
+    // Activity logs collection
+    match /activityLogs/{logId} {
+      allow read: if isAdmin();
+      allow write: if false; // Only server-side writes
+    }
+    
+    // Analytics collection
+    match /analytics/{analyticsId} {
+      allow read: if isManagerOrHigher();
+      allow write: if isAdmin();
+    }
+  }
+}`;
+
+// Write the updated rules to the firestore.rules file
+fs.writeFileSync('firestore.rules', firestoreRules);
+console.log('Updated Firestore rules written to firestore.rules');
+
+// Deploy the updated rules to Firebase
+try {
+  console.log('Deploying updated Firestore rules to Firebase...');
+  execSync('firebase deploy --only firestore:rules', { stdio: 'inherit' });
+  console.log('Firestore rules deployed successfully!');
+} catch (error) {
+  console.error('Error deploying Firestore rules:', error);
+}
